@@ -33,7 +33,7 @@ module data_statistics #(
 
 );
 
-localparam		WR_LAT	= 2,
+localparam		WR_LAT	= 5,
 				RD_LAT	= 2;
 
 reg [DSIZE-1:0]		pre_data [WR_LAT-1:0];
@@ -42,21 +42,32 @@ reg [31:0]			pre_dcnt [WR_LAT-1:0];
 reg [DSIZE-1:0]		post_data[RD_LAT-1:0];
 reg [31:0]			post_dcnt[RD_LAT-1:0];
 
-wire[WR_LAT-1:0]	pre_dont_exist; 
-wire[RD_LAT-1:0]	post_dont_exist;
+reg[WR_LAT-1:0]		pre_dont_exist; 
+reg[WR_LAT-1:0]		pre_add_en;
 wire				dont_exist;
-genvar II;
-generate
-for(II=0;II<WR_LAT;II=II+1)
-	assign	pre_dont_exist	= pre_data != data;
-endgenerate
+reg [WR_LAT-1:0]	protect;
 
-generate
-for(II=0;II<RD_LAT;II=II+1)
-	assign	post_dont_exist	= post_data != data;
-endgenerate
+integer 			II;
+integer 			JJ;
 
-assign	dont_exist = (&{pre_dont_exist,post_dont_exist}) && vld;
+always@(*)begin:GEN_PRE_DONT_EXIST
+	if(vld)
+		for(II=0;II<WR_LAT;II=II+1)
+			pre_dont_exist[II]	= ((pre_data[II] != data) && !protect[II]) || &protect;
+	else
+			pre_dont_exist	= {WR_LAT{1'b0}};
+end
+
+always@(*)begin:GEN_PRE_ADD_EN
+	if(vld)
+		for(II=0;II<WR_LAT;II=II+1)
+			pre_add_en[II]	= (pre_data[II] == data) && !protect[II];
+	else
+			pre_add_en	= {WR_LAT{1'b0}};
+end
+
+
+assign	dont_exist = &{pre_dont_exist | protect};
 
 
 reg		pro_post;
@@ -74,46 +85,112 @@ reg [WR_LAT-1:0]		post_tail;
 		pro_post	<= |post_tail;
 end end
 
-always@(posedge clock,negedge rst_n)begin:PRE_SHIFT
-integer JJ;
-reg [WR_LAT-1:0]	protect;
-	if(~rst_n || start)begin
-		for(JJ=0;JJ<WR_LAT;JJ=JJ+1)begin
-			pre_data[JJ]	<= {DSIZE{1'b0}};
+//---->>  <<-------
+always@(posedge clock,negedge rst_n)begin
+	if(~rst_n)	
+		for(JJ=0;JJ<WR_LAT;JJ=JJ+1)
 			pre_dcnt[JJ]	<= 32'd0;
-			protect			<= ~({WR_LAT{1'b0}} + 1'b1);
-		end
-	else if (pro_post) begin
-		for(JJ=1;JJ<WR_LAT;JJ=JJ+1)begin
-			pre_data[JJ]	<= pre_data[JJ-1];
+	else if(start)	
+		for(JJ=0;JJ<WR_LAT;JJ=JJ+1)
+			pre_dcnt[JJ]	<= 32'd0; 
+	else if(pro_post)begin
+		for(JJ=1;JJ<WR_LAT;JJ=JJ+1)
 			pre_dcnt[JJ]	<= pre_dcnt[JJ-1];
-		end
-		pre_data[0]	<= pre_data[0];
 		pre_dcnt[0]	<= 32'd0;
-		protect		<= {WR_LAT{1'b1}};
 	end else if(dont_exist)begin
-		for(JJ=1;JJ<WR_LAT;JJ=JJ+1)begin
-			pre_data[JJ]	<= pre_data[JJ-1];
-			pre_dcnt[JJ]	<= pre_dcnt[JJ-1];
+		if(vld)begin
+			for(JJ=1;JJ<WR_LAT;JJ=JJ+1)
+				pre_dcnt[JJ]	<= pre_dcnt[JJ-1];
+			pre_dcnt[0]	<= 32'd1;
+		end else begin
+			for(JJ=0;JJ<WR_LAT;JJ=JJ+1)
+				pre_dcnt[JJ]	<= pre_dcnt[JJ];
 		end
-		pre_data[0]	<= data;
-		pre_dcnt[0]	<= 32'd1;
-		protect		<= protect >> 1;
 	end else begin
-		for(JJ=0;JJ<WR_LAT;JJ=JJ+1)begin
-			pre_dcnt[JJ]	<= pre_dcnt[JJ] + (pre_dont_exist[JJ] && !protect[JJ]);
+		for(JJ=0;JJ<WR_LAT;JJ=JJ+1)
+			pre_dcnt[JJ]	<= pre_dcnt[JJ] + (pre_add_en[JJ] );
+end end
+
+always@(posedge clock,negedge rst_n)begin
+	if(~rst_n)	
+		for(JJ=0;JJ<WR_LAT;JJ=JJ+1)
+			pre_data[JJ]	<= {DSIZE{1'b0}};
+	else if(start)		
+		for(JJ=0;JJ<WR_LAT;JJ=JJ+1)
+			pre_data[JJ]	<= {DSIZE{1'b0}}; 
+	else if(pro_post)begin
+		for(JJ=1;JJ<WR_LAT;JJ=JJ+1)
+			pre_data[JJ]	<= pre_data[JJ-1];
+		pre_data[0]	<= pre_data[0];
+	end else if(dont_exist)begin
+		if(vld)begin
+			for(JJ=1;JJ<WR_LAT;JJ=JJ+1)
+				pre_data[JJ]	<= pre_data[JJ-1];
+			pre_data[0]	<= data;
+		end else begin
+			for(JJ=0;JJ<WR_LAT;JJ=JJ+1)
+				pre_data[JJ]	<= pre_data[JJ];
 		end
+	end else begin
+		for(JJ=0;JJ<WR_LAT;JJ=JJ+1)
+			pre_data[JJ]	<= pre_data[JJ];
+end end
+
+always@(posedge clock,negedge rst_n)begin
+	if(~rst_n)			protect			<= ~({WR_LAT{1'b0}} + 1'b0);
+	else if(start)		protect			<= ~({WR_LAT{1'b0}} + 1'b0); 
+	else if(pro_post)	protect			<= ~({WR_LAT{1'b0}} + 1'b0);
+	else if(dont_exist)	protect			<= vld? (protect<<1) : protect;
+	else 				protect			<= protect;
+end
+							
+//---<<  >>-----------
+//--->>  <<-----------
+reg [WR_LAT-1:0]	pre_data_vld;
+always@(posedge clock,negedge rst_n)begin
+	if(~rst_n)		pre_data_vld	<= {WR_LAT{1'b0}};
+	else begin
+		if(start)
+				pre_data_vld	<= {WR_LAT{1'b0}};
+		else if(pro_post)
+				pre_data_vld	<= pre_data_vld << 1;
+		else if(dont_exist)
+				pre_data_vld	<= vld? {pre_data_vld[WR_LAT-2:0],1'b1} : pre_data_vld;
+		else	pre_data_vld	<= {pre_data_vld[WR_LAT-1:1],vld};
 end end
 
 always@(posedge clock)begin:POST_SHIFT
-integer JJ;
 	for(JJ=1;JJ<WR_LAT;JJ=JJ+1)begin
 		post_data[JJ]	<= post_data[JJ-1];
 		post_dcnt[JJ]	<= post_dcnt[JJ-1];
 	end
-	post_data[0]	<= pre_data[WR_LAT];
-	post_dcnt[0]	<= pre_dcnt[WR_LAT];
+	post_data[0]	<= pre_data[WR_LAT-1];
+	post_dcnt[0]	<= pre_dcnt[WR_LAT-1];
+end
+
+reg[RD_LAT-1:0]			post_data_vld;
+always@(posedge clock)begin:POST_VLD_SHIFT
+	for(JJ=1;JJ<WR_LAT;JJ=JJ+1)begin
+		post_data_vld[JJ]	<= post_data_vld[JJ-1];
+	end
+	post_data_vld[0]	<= (pre_data_vld[WR_LAT-1] && vld && dont_exist) || (|pre_dcnt[WR_LAT-1] && pro_post);
+end
+
+reg [DSIZE-1:0]		mix_data;
+reg [31:0]			mix_dcnt;
+reg					mix_data_vld;
+always@(posedge clock,negedge rst_n)begin
+	if(~rst_n)begin
+		mix_data	<= {DSIZE{1'b0}};
+		mix_dcnt	<= 32'd0; 
+		mix_data_vld<= 1'b0;
+	end else begin
+		mix_data	<= post_data[RD_LAT-1];
+		mix_dcnt	<= post_dcnt[RD_LAT-1];
+		mix_data_vld<= post_data_vld[RD_LAT-1];
 end end
+
+reg					wr_en;
 
 wire [31:0]			ram_data;
 reg  [31:0]			sum_data;
@@ -127,15 +204,15 @@ p2_ram p2_ram_inst(
 	.data           (sum_data           ),
 	.rdaddress      (rd_addr	        ),
 	.wraddress      (wr_addr            ),
-	.wren           (1'b1               ),
+	.wren           (wr_en              ),
 	.q              (ram_data           )
 );
 
 always@(post_data[0],index)
-	rd_addr	= get_summary? index : post_data[0])
+	rd_addr	= get_summary? index : post_data[0];
 
 wire[32:0]			sum_cnt;
-assign	sum_cnt = ram_data + post_dcnt[RA_LAT];
+assign	sum_cnt = ram_data + mix_dcnt;
 
 always@(posedge clock,negedge rst_n)
 	if(~rst_n)	sum_data	<= 32'd0;
@@ -143,7 +220,11 @@ always@(posedge clock,negedge rst_n)
 
 always@(posedge clock,negedge rst_n)
 	if(~rst_n)	wr_addr		<= 10'd0;
-	else		wr_addr		<= post_data[RD_LAT];
+	else		wr_addr		<= mix_data;
+
+always@(posedge clock,negedge rst_n)
+	if(~rst_n)	wr_en		<= 1'b0;
+	else		wr_en		<= mix_data_vld;
 
 assign	summary	= ram_data;
 

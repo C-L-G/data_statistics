@@ -35,23 +35,72 @@ bit			start	= 0;
 bit			finish	= 0;
 bit			valid	= 0;
 logic[9:0]	data;
+int			orgin_summary [];
+int			rep_summary [];
+bit			get_summary;
+logic[9:0]	index;
+logic[31:0]	osum;
 
-initial begin
+localparam	RANGE			= 20,
+			TATLE_NUM		= 1000;
+
+
+task count_task;
 	start	= 1;
 	valid	= 0;
+	orgin_summary	= new[RANGE];
+	orgin_summary	= {RANGE{0}};
 	repeat(3)	@(posedge clock);
 	start	= 0;
-	repeat(100)begin
-		data = $urandom_range(0,10);
+	repeat(TATLE_NUM)begin
+		data = $urandom_range(0,RANGE-1);
+		//data	= 1;
 		valid	= 1;
 		@(posedge clock);
 	end
 	valid	= 0;
 	repeat(10) @(posedge clock);
 	finish	= 1;
-	repeat(3) @(posedge clock);
+	repeat(30) @(posedge clock);
 	finish	= 0;
+endtask: count_task
+
+task report_task;
+	get_summary	= 0;
+	index		= 0;
+	rep_summary	= new[RANGE];
+	rep_summary = {RANGE{0}};
+	repeat(3)	@(posedge clock);
+	get_summary	= 1;
+	repeat(RANGE)begin
+		@(posedge clock);
+		index	+= 1;
+	end
+	repeat(10) @(posedge clock);
+	get_summary	= 0;
+endtask: report_task
+	
+initial begin
+	count_task;
+	report_task;
 end
+
+logic[9:0]	index_lat;
+
+cross_clk_sync #(       
+	.DSIZE    	(10),    
+	.LAT		(2)     
+)latency_inst0(    
+	clock,              
+	get_summary,               
+	index,       
+	index_lat        
+);          
+
+always@(posedge clock) 
+	if(valid)	orgin_summary[data] += 1;
+always_comb if(get_summary) rep_summary[index_lat] = osum; 
+
 
 data_statistics #(
 	.DSIZE		(10)
@@ -63,9 +112,9 @@ data_statistics #(
 	.data  			(data           ),
 	.vld			(valid	        ),
     
-	.index			(				),
-	.summary		(	            ),
-	.get_summary	(1'b0	        )
+	.index			(index			),
+	.summary		(osum           ),
+	.get_summary	(get_summary    )
 );
 
 
